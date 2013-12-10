@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Feature Release Velocity Allocation</title>
+    <!--  (c) 2013 Rally Software Development Corp.  All Rights Reserved. -->
+    <!--  Build Date: Mon Dec 09 2013 18:24:15 GMT-0700 (Mountain Standard Time) -->
+    
+    <script type="text/javascript">
+        var APP_BUILD_DATE = "Mon Dec 09 2013 18:24:15 GMT-0700 (Mountain Standard Time)";
+        var CHECKSUM = 3754735068;
+    </script>
+    
+    <script type="text/javascript" src="/apps/2.0rc2/sdk.js"></script>
+
+    <script type="text/javascript">
+        Rally.onReady(function() {
+             
+/**
+ * A link that pops up a version dialog box
+ */
+
+Ext.define('Rally.technicalservices.InfoLink',{
+    extend: 'Ext.Component',
+    alias: 'widget.tsinfolink',
+    
+    /**
+     * @cfg {String} informationHtml
+     * Additional text to be displayed on the popup dialog (for exmaple,
+     * to add a description of the app's use or functionality)
+     */
+    informationHtml: null,
+    
+    /**
+     * 
+     * cfg {String} title
+     * The title for the dialog box
+     */
+     text: "Information",
+    
+    renderTpl: "<div id='{id}-infolinkWrap' class='tsinfolink'>TS</div>",
+
+    initComponent: function() {
+        this.callParent(arguments);
+       
+    },
+    
+    onRender: function() {
+        this.callParent(arguments);
+        this.mon(this.el,'click',this.onClick,this);
+    },
+    _generateChecksum: function(string){
+        var chk = 0x12345678,
+            i;
+        string = string.replace(/var CHECKSUM = .*;/,"");
+        
+        for (i = 0; i < string.length; i++) {
+            chk += (string.charCodeAt(i) * i);
+        }
+    
+        return chk;
+    },
+    _checkChecksum: function(container) {
+        var me = this;
+        Ext.Ajax.request({
+            url: document.URL,
+            params: {
+                id: 1
+            },
+            success: function (response) {
+                text = response.responseText;
+                if ( CHECKSUM ) {
+                    if ( CHECKSUM !== me._generateChecksum(text) ) {
+                        console.log("Checksums don't match!");
+                        if ( me.dialog ) {
+                            me.dialog.add({xtype:'container',html:'Checksums do not match'});
+                        }
+                    }
+                }
+            }
+        });
+    },
+    onClick: function(e) {
+        var me = this;
+        this._checkChecksum(this);
+        
+        var dialog_items = [];
+        
+        if ( this.informationHtml ) {
+            dialog_items.push({
+                xtype:'container',
+                html: this.informationHtml
+            });
+        }
+                
+        dialog_items.push({
+            xtype:'container',
+            html:"This app was created by the Rally Technical Services Team."
+        });
+        
+        if ( APP_BUILD_DATE ) {
+            dialog_items.push({
+                xtype:'container',
+                html:'Build date/time: ' + APP_BUILD_DATE
+            });
+        }
+        
+        if (this.dialog){this.dialog.destroy();}
+        this.dialog = Ext.create('Rally.ui.dialog.Dialog',{
+            defaults: { padding: 5, margin: 5 },
+            closable: true,
+            draggable: true,
+            title: me.title,
+            items: dialog_items
+        });
+        this.dialog.show();
+    }
+});
+/*
+ */
+Ext.define('Rally.technicalservices.Logger',{
+    constructor: function(config){
+        Ext.apply(this,config);
+    },
+    log: function(args){
+        var timestamp = "[ " + Ext.util.Format.date(new Date(), "Y-m-d H:i:s.u") + " ]";
+        //var output_args = arguments;
+        //output_args.unshift( [ "[ " + timestamp + " ]" ] );
+        //output_args = Ext.Array.push(output_args,arguments);
+        
+        var output_args = [];
+        output_args = Ext.Array.push(output_args,[timestamp]);
+        output_args = Ext.Array.push(output_args, Ext.Array.slice(arguments,0));
+
+        window.console && console.log.apply(console,output_args);
+    }
+
+});
+
+Ext.define('CustomApp', {
+    extend: 'Rally.app.App',
+    componentCls: 'app',
+
+
+    // Customer-specific Custom Fields
+    _featurePlanEstimate: 'PIPlanEstimate',
+
+    // Global vars
+    _releaseCombobox: null,
+    _releasePlannedVelocityByProject: {},
+    _featurePlanEstimateByProject: {},
+    _summaryGrid: null,
+    _projectNames: [],
+
+    logger: new Rally.technicalservices.Logger(),
+    items: [
+        {
+            xtype: 'container',
+            itemId: 'releaseSelector'
+        },
+        {
+            xtype: 'container',
+            itemId: 'gridContainer'
+        }
+    ],
+
+    _onReleaseChanged: function() {
+
+        var me = this;
+
+        var thisRelease = this._releaseCombobox.getRecord();
+        var thisReleaseName = thisRelease.get('Name');
+        var thisReleaseObjectID = thisRelease.get('ObjectID');
+
+        var releaseQuery = [
+            {
+                property: "Name",
+                operator: "=",
+                value: thisReleaseName
+            }
+        ];
+
+        var releaseStore = Ext.create('Rally.data.WsapiDataStore', {
+            model: 'Release',
+            autoLoad: true,
+            filters: releaseQuery,
+            sorters: [
+                {
+                    property: 'ReleaseDate',
+                    direction: 'ASC'
+                }
+            ],
+            fetch: [ 'ObjectID', 'Name', 'PlannedVelocity', 'ReleaseStartDate', 'ReleaseDate', 'Project'],
+            context: { projectScopeDown: true },
+            listeners: {
+                scope: this,
+                load: function(store, records) {
+                    Ext.Array.each(records, function(release) {
+                        var releaseProject = release.get('Project');
+                        var releasePlannedVelocity = release.get('PlannedVelocity');
+                        var releaseProjName = releaseProject._refObjectName;
+                        me._releasePlannedVelocityByProject[releaseProjName] = releasePlannedVelocity;
+                    });
+                    me._getFeaturePlanEstimates();
+                }
+            }
+        });
+    },
+
+    _getFeaturePlanEstimates: function() {
+
+        var me = this;
+
+        var featureStore = Ext.create('Rally.data.WsapiDataStore', {
+            model: 'PortfolioItem/Feature',
+            autoLoad: true,
+            sorters: [
+                {
+                    property: 'FormattedID',
+                    direction: 'ASC'
+                }
+            ],
+            fetch: [ 'ObjectID', 'Name', me._featurePlanEstimate, 'Project'],
+            context: { projectScopeDown: true },
+            listeners: {
+                scope: this,
+                load: function(store, records) {
+                    Ext.Array.each(records, function(feature) {
+                        var featureProject = feature.get('Project');
+                        var featureProjectName = featureProject._refObjectName;
+                        var featurePlanEstimate = feature.get(me._featurePlanEstimate);
+
+                        var testKeyPresent = (featureProjectName in me._featurePlanEstimateByProject);
+                        if (!testKeyPresent) {
+                            me._featurePlanEstimateByProject[featureProjectName] = 0;
+                            me._projectNames.push(featureProjectName);
+                        }
+                        me._featurePlanEstimateByProject[featureProjectName] += featurePlanEstimate;
+                    });
+                    console.log(me._featurePlanEstimateByProject);
+
+                    me._createSummaryGrid();
+                }
+            }
+        });
+    },
+
+    _createSummaryGrid: function() {
+
+        var me = this;
+
+        if (me._summaryGrid) {
+            me._summaryGrid.destroy();
+        }
+
+        var gridRecords = [];
+        Ext.Array.each(me._projectNames, function(projectName) {
+            //Perform custom actions with the data here
+            //Calculations, etc.
+            gridRecords.push({
+                ProjectName: projectName,
+                FeaturePlanEstimate: me._featurePlanEstimateByProject[projectName],
+                ReleasePlannedVelocity: me._releasePlannedVelocityByProject[projectName]
+            });
+        });
+
+        console.log(gridRecords);
+
+        me._summaryGrid = Ext.create('Rally.ui.grid.Grid', {
+            store: Ext.create('Rally.data.custom.Store', {
+                data: gridRecords,
+                pageSize: 5
+            }),
+            columnCfgs: [
+                {
+                    text: 'Project Name', dataIndex: 'ProjectName', flex: 1
+                },
+                {
+                    text: 'Total Feature Plan Estimate', dataIndex: 'FeaturePlanEstimate'
+                },
+                {
+                    text: 'Release Planned Velocity', dataIndex: 'ReleasePlannedVelocity'
+                },
+            ]
+        });
+
+        this.down('#gridContainer').add(me._summaryGrid);
+    },
+
+    launch: function() {
+        var me = this;
+
+        this._releaseCombobox = Ext.create('Rally.ui.combobox.ReleaseComboBox', {
+            xtype: 'rallyreleasecombobox',
+            listeners: {
+                scope: this,
+                change: function(releasebox, new_value, old_value) {
+                    this._onReleaseChanged();
+                }
+            }
+        });
+
+        this.down('#releaseSelector').add(this._releaseCombobox);
+    }
+});
+            
+               Rally.launchApp('CustomApp', {
+                   name: 'Feature Release Velocity Allocation'
+               });
+        });
+    </script>
+    
+    <style type="text/css">
+
+.app {
+}
+.tsinfolink {
+    position:absolute;
+    right:0px;
+    width:5%;
+}
+    </style>
+
+</head>
+<body></body>
+</html>
