@@ -130,7 +130,7 @@ Ext.define('CustomApp', {
         me._summaryGrid = Ext.create('Rally.ui.grid.Grid', {
             store: Ext.create('Rally.data.custom.Store', {
                 data: gridRecords,
-                pageSize: 5
+                pageSize: 40
             }),
             columnCfgs: [
                 {
